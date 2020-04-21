@@ -67,9 +67,9 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             # Create object handles
             _, self.target_right_handle = client.simxGetObjectHandle("UR5_target", client.simxServiceCall())
             _, self.connector_handle = client.simxGetObjectHandle('RG2_attachPoint', client.simxServiceCall())
-            _, self.sensor_handle = client.simxGetObjectHandle('RG2_attachProxSensor', client.simxServiceCall())
+            _, self.prox_sensor_handle = client.simxGetObjectHandle('RG2_attachProxSensor', client.simxServiceCall())
             _, self.gripper_joint_handle = client.simxGetObjectHandle('RG2_openCloseJoint', client.simxServiceCall())
-            _, self.cube_handle = client.simxGetObjectHandle("cube", client.simxServiceCall())
+            _, self.cube_handle = client.simxGetObjectHandle("obj_cube", client.simxServiceCall())
             _, self.right_force_sensor_handle = client.simxGetObjectHandle("RG2_rightForceSensor", client.simxServiceCall())
             _, self.vision_sensor_handle = client.simxGetObjectHandle('vision_sensor', client.simxServiceCall())
             _, self.side_vision_sensor_handle = client.simxGetObjectHandle('side_vision_sensor', client.simxServiceCall())
@@ -272,6 +272,21 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             if not (ret_pos and ret_orient):
                 print('Failed to set cube back to position')
                 exit
+
+
+
+        def reset_objects(self):
+            # Relative frame handle
+            relObjHandle = -1
+            # Get all shape object handles
+            obj_list = ["obj_cube", "obj_cube_large", "obj_cylinder", "obj_cylinder_small", "obj_cuboid", "obj_cuboid_thin", "obj_cuboid_long"]
+            obj_handles = [client.simxGetObjectHandle(obj_name, client.simxServiceCall())[1] for obj_name in obj_list]
+            # Filter object handles by names starting with "obj"
+            for handle in obj_handles:
+                position = [np.random.uniform(self.workspace_limits[0][0], self.workspace_limits[0][1]), np.random.uniform(self.workspace_limits[1][0], self.workspace_limits[1][1]), +1.5000e-02]
+                orientation = [0, 0, 0]
+                ret_pos = client.simxSetObjectPosition(handle, relObjHandle, position, client.simxServiceCall())
+                ret_orient = client.simxSetObjectOrientation(handle, relObjHandle, orientation, client.simxServiceCall())
 
 
 
@@ -639,8 +654,18 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
                     self.reset_cube()
 
                 if self.is_testing:
+                    prox = client.simxReadProximitySensor(self.prox_sensor_handle, client.simxServiceCall())
+                    print(prox)
+                    if prox[1]:
+                        print("Detected object handle: {} ".format(prox[4]))
+                        print("Cube handle: {} ".format(self.cube_handle))
+                    # if collision:
+                    #     print("Cube in collision")
+                    # else:
+                    #     print("Cube is safe")
                     self.reset_cube()
                     self.execute_action = True
+                    self.reset_objects()
 
 
                 # Save information for next training step
