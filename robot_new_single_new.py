@@ -77,7 +77,7 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             # Parameters
             self.use_cuda = USE_CUDA
             self.is_testing = IS_TESTING
-            self.explore_prob = 0.5
+            self.explore_prob = 0.1 if self.is_testing else 0.5
             self.learning_rate = 1e-4
             self.future_reward_discount = 0.5
             self.explore_rate_decay = True
@@ -86,6 +86,9 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             self.reward_value_log  = []
             self.predicted_value_log = []
             self.executed_action_log = []
+            self.obj_list = ["obj_cube", "obj_cube_large", "obj_cylinder", "obj_cylinder_small", "obj_cuboid", "obj_cuboid_long"] # "obj_cuboid_thin"
+            self.object_handles = [client.simxGetObjectHandle(obj, client.simxServiceCall())[1] for obj in self.obj_list]
+            self.obj_count = len(self.object_handles)
 
             # Initialize Huber loss
             self.criterion = torch.nn.SmoothL1Loss(reduce=False) # Huber loss
@@ -95,7 +98,7 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             # Q-Network
             self.model = reinforcement_net(use_cuda=self.use_cuda)
             if self.is_testing:
-                self.model.load_state_dict(torch.load('/home/mohamed/drive/coppelia_stuff/scripts/logs/2020-04-17.00:25:27/models/snapshot-000999.grasp.pth'))
+                self.model.load_state_dict(torch.load('/home/mohamed/drive/coppelia_stuff/scripts/logs/2020-04-27.03:21:08/models/snapshot-000449.grasp.pth'))
             if self.use_cuda:
                 self.model = self.model.cuda()
 
@@ -121,6 +124,8 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
 
 
             self.setup_sim_camera()
+
+            self.reset_objects()
 
 
         def setup_sim_camera(self):
@@ -265,7 +270,7 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
         def reset_cube(self):
             relObjHandle = -1
             # position = [-5.1500e-01, -1.5000e-02, +1.5000e-02]
-            position = [np.random.uniform(self.workspace_limits[0][0], self.workspace_limits[0][1]), np.random.uniform(self.workspace_limits[1][0], self.workspace_limits[1][1]), +1.5000e-02]
+            position = [np.random.uniform(self.workspace_limits[0][0], self.workspace_limits[0][1]), np.random.uniform(self.workspace_limits[1][0], self.workspace_limits[1][1]), +3.0000e-02]
             orientation = [0, 0, 0]
             ret_pos = client.simxSetObjectPosition(self.cube_handle, relObjHandle, position, client.simxServiceCall())
             ret_orient = client.simxSetObjectOrientation(self.cube_handle, relObjHandle, orientation, client.simxServiceCall())
@@ -279,15 +284,47 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             # Relative frame handle
             relObjHandle = -1
             # Get all shape object handles
-            obj_list = ["obj_cube", "obj_cube_large", "obj_cylinder", "obj_cylinder_small", "obj_cuboid", "obj_cuboid_thin", "obj_cuboid_long"]
-            obj_handles = [client.simxGetObjectHandle(obj_name, client.simxServiceCall())[1] for obj_name in obj_list]
+            # obj_list = ["obj_cube", "obj_cube_large", "obj_cylinder", "obj_cylinder_small", "obj_cuboid", "obj_cuboid_thin", "obj_cuboid_long"]
+            # obj_handles = [client.simxGetObjectHandle(obj_name, client.simxServiceCall())[1] for obj_name in obj_list]
             # Filter object handles by names starting with "obj"
-            for handle in obj_handles:
-                position = [np.random.uniform(self.workspace_limits[0][0], self.workspace_limits[0][1]), np.random.uniform(self.workspace_limits[1][0], self.workspace_limits[1][1]), +1.5000e-02]
-                orientation = [0, 0, 0]
+            for handle in self.object_handles:
+                position = [np.random.uniform(self.workspace_limits[0][0], self.workspace_limits[0][1]), np.random.uniform(self.workspace_limits[1][0], self.workspace_limits[1][1]), +3.0000e-02]
+                orientation = [np.random.uniform(0, 2*np.pi), np.random.uniform(0, 2*np.pi), 0]
                 ret_pos = client.simxSetObjectPosition(handle, relObjHandle, position, client.simxServiceCall())
                 ret_orient = client.simxSetObjectOrientation(handle, relObjHandle, orientation, client.simxServiceCall())
 
+
+        def get_obj_positions(self):
+            obj_positions = []
+            for object_handle in self.object_handles:
+                sim_ret, object_position = client.simxGetObjectPosition(object_handle, -1, client.simxServiceCall())
+                obj_positions.append(object_position)
+            return obj_positions
+        
+            # Move the grasped object elsewhere
+        def remove_grasped_object(self):
+            object_positions = np.asarray(self.get_obj_positions())
+            object_positions = object_positions[:,2]
+            grasped_object_ind = np.argmax(object_positions)
+            grasped_object_handle = self.object_handles[grasped_object_ind]
+            client.simxSetObjectPosition(grasped_object_handle,-1,(-0.5, 0.5 + 0.05*float(grasped_object_ind), 0.1), client.simxServiceCall())
+            self.obj_count -= 1
+                
+
+
+        def workspace_empty(self):
+            obj_out = []
+            for object_handle in self.object_handles:
+                sim_ret, object_position = client.simxGetObjectPosition(object_handle, -1, client.simxServiceCall())
+                if ((object_position[0] < self.workspace_limits[0][0]) or (object_position[0] > self.workspace_limits[0][1])) or \
+                    ((object_position[1] < self.workspace_limits[1][0]) or (object_position[1] > self.workspace_limits[1][1])) or \
+                        ((object_position[2] < self.workspace_limits[2][0]) or (object_position[2] > self.workspace_limits[2][1])):
+                    obj_out.append(True)
+
+            if len(obj_out) == len(self.object_handles):
+                return True
+
+            return False
 
 
         def save_snapshot(self, iteration):
@@ -297,7 +334,6 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
             print('-'*50)
             print('Model saved.')
             print('-'*50)
-
 
 
         def grasp(self, position, best_rotation_angle):
@@ -315,12 +351,33 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
 
             # Move gripper to location above grasp target
             grasp_location_margin = 0.15
-            # sim_ret, UR5_target_handle = vrep.simxGetObjectHandle(self.sim_client,'UR5_target',vrep.simx_opmode_blocking)
+            # sim_ret, UR5_target_handle = client.simxGetObjectHandle(self.sim_client,'UR5_target',client.simx_opmode_blocking)
             location_above_grasp_target = (position[0], position[1], position[2] + grasp_location_margin)
+
+            # # Compute gripper position and linear movement increments
+            tool_position = location_above_grasp_target
+            # self.move_to(tool_position)
 
             # Compute gripper position and linear movement increments
             tool_position = location_above_grasp_target
-            self.move_to(tool_position)
+            sim_ret, UR5_target_position = client.simxGetObjectPosition(self.target_right_handle, -1, client.simxServiceCall())
+            move_direction = np.asarray([tool_position[0] - UR5_target_position[0], tool_position[1] - UR5_target_position[1], tool_position[2] - UR5_target_position[2]])
+            move_magnitude = np.linalg.norm(move_direction)
+            move_step = 0.05*move_direction/move_magnitude
+            num_move_steps = int(np.floor(move_direction[0]/move_step[0]))
+
+
+            # Compute gripper orientation and rotation increments
+            sim_ret, gripper_orientation = client.simxGetObjectOrientation(self.target_right_handle, -1, client.simxServiceCall())
+            rotation_step = 0.3 if (tool_rotation_angle - gripper_orientation[1] > 0) else -0.3
+            num_rotation_steps = int(np.floor((tool_rotation_angle - gripper_orientation[1])/rotation_step))
+
+            # Simultaneously move and rotate gripper
+            for step_iter in range(max(num_move_steps, num_rotation_steps)):
+                client.simxSetObjectPosition(self.target_right_handle,-1,(UR5_target_position[0] + move_step[0]*min(step_iter,num_move_steps), UR5_target_position[1] + move_step[1]*min(step_iter,num_move_steps), UR5_target_position[2] + move_step[2]*min(step_iter,num_move_steps)),client.simxServiceCall())
+                client.simxSetObjectOrientation(self.target_right_handle, -1, (np.pi/2, gripper_orientation[1] + rotation_step*min(step_iter,num_rotation_steps), np.pi/2), client.simxServiceCall())
+            client.simxSetObjectPosition(self.target_right_handle,-1,(tool_position[0],tool_position[1],tool_position[2]),client.simxServiceCall())
+            client.simxSetObjectOrientation(self.target_right_handle, -1, (np.pi/2, tool_rotation_angle, np.pi/2), client.simxServiceCall())
 
             # Ensure gripper is open
             self.open_gripper()
@@ -651,21 +708,19 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
 
 
                     
-                    self.reset_cube()
+                    # self.reset_cube()
+                    if grasp_success:
+                        self.remove_grasped_object() # or prev_grasp_success?
+                    if self.workspace_empty():
+                        self.reset_objects()
 
                 if self.is_testing:
-                    prox = client.simxReadProximitySensor(self.prox_sensor_handle, client.simxServiceCall())
-                    print(prox)
-                    if prox[1]:
-                        print("Detected object handle: {} ".format(prox[4]))
-                        print("Cube handle: {} ".format(self.cube_handle))
-                    # if collision:
-                    #     print("Cube in collision")
-                    # else:
-                    #     print("Cube is safe")
-                    self.reset_cube()
                     self.execute_action = True
-                    self.reset_objects()
+                    
+                    if grasp_success:
+                        self.remove_grasped_object() # or prev_grasp_success?
+                    if self.workspace_empty():
+                        self.reset_objects()
 
 
                 # Save information for next training step
@@ -696,7 +751,7 @@ with b0RemoteApi.RemoteApiClient('b0RemoteApi_V-REP','b0RemoteApi', timeout=5) a
 
         robot.get_action(iter)
 
-        if (iter+1) % 200 == 0:
+        if (iter+1) % 50 == 0:
             robot.save_snapshot(iter)
 
     # Stop simulation
