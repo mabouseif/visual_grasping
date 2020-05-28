@@ -15,7 +15,7 @@ from collections import OrderedDict
 
 class reinforcement_net(nn.Module):
 
-    def __init__(self, use_cuda): # , snapshot=None
+    def __init__(self, use_cuda, rotations): # , snapshot=None
         super(reinforcement_net, self).__init__()
         self.use_cuda = use_cuda
 
@@ -23,7 +23,7 @@ class reinforcement_net(nn.Module):
         self.grasp_color_trunk = torchvision.models.densenet.densenet121(pretrained=True)
         self.grasp_depth_trunk = torchvision.models.densenet.densenet121(pretrained=True)
 
-        self.num_rotations = 16 # 1 # or -1
+        self.num_rotations = rotations # 16 # 1 # or -1
 
         # Construct network branches for pushing and grasping
         self.pushnet = nn.Sequential(OrderedDict([

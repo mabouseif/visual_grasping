@@ -88,6 +88,9 @@ class Logger():
     def save_visualizations(self, iteration, affordance_vis, name):
         cv2.imwrite(os.path.join(self.visualizations_directory, '%06d.%s.png' % (iteration,name)), affordance_vis)
 
+    def save_visualizations_best(self, iteration, best_vis, name):
+        cv2.imwrite(os.path.join(self.visualizations_directory, '%06d.%s.png' % (iteration,name)), best_vis)
+
     # def save_state_features(self, iteration, state_feat):
     #     h5f = h5py.File(os.path.join(self.visualizations_directory, '%06d.state.h5' % (iteration)), 'w')
     #     h5f.create_dataset('state', data=state_feat.cpu().data.numpy())
