@@ -32,6 +32,33 @@ from model import reinforcement_net
 import logger
 
 
+
+
+
+class Metrics():
+    def __init__(self):
+        self.current_run_ = []
+        self.all_runs_ = []
+        self.run_count = 0
+
+    def add(self, action_result):
+        self.current_run_.append(action_result)
+
+    def update(self):
+        self.run_count += 1
+        self.all_runs_.append(self.current_run_)
+        self.current_run_ = []
+
+    def save(self):
+        
+        np.save('/home/mohamed/drive/coppelia_stuff/scripts/multi_metrics.npy', self.all_runs_)
+
+
+
+
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--test', dest='test', action='store_true', default=False)
@@ -84,8 +111,8 @@ if __name__ == "__main__":
                 self.use_cuda = USE_CUDA
                 self.lateral = LATERAL
                 self.is_testing = IS_TESTING
-                self.explore_prob = 0.1 if self.is_testing else 0.5
-                self.learning_rate = 1e-4
+                self.explore_prob = 0.0 if self.is_testing else 0.5
+                self.learning_rate = 1e-5 if self.is_testing else 1e-4
                 self.future_reward_discount = 0.5
                 self.explore_rate_decay = True
                 self.experience_replay = True
@@ -96,6 +123,7 @@ if __name__ == "__main__":
                 self.obj_list = ["obj_cube", "obj_cube_large", "obj_cylinder", "obj_cylinder_small", "obj_cuboid", "obj_cuboid_long"] # "obj_cuboid_thin"
                 self.object_handles = [client.simxGetObjectHandle(obj, client.simxServiceCall())[1] for obj in self.obj_list]
                 self.obj_count = len(self.object_handles)
+                self.metrics = Metrics()
 
                 # Initialize Huber loss
                 self.criterion = torch.nn.SmoothL1Loss(reduce=False) # Huber loss
@@ -157,6 +185,89 @@ if __name__ == "__main__":
                 # Get background image
                 self.bg_color_img, self.bg_depth_img = self.get_camera_data()
                 self.bg_depth_img = self.bg_depth_img * self.cam_depth_scale
+
+
+
+
+            def add_objects(self):
+
+                # Add each object to robot workspace at x,y location and orientation (random or pre-loaded)
+                self.object_handles = []
+                sim_obj_handles = []
+                for object_idx in range(len(self.obj_mesh_ind)):
+                    curr_mesh_file = os.path.join(self.obj_mesh_dir, self.mesh_list[self.obj_mesh_ind[object_idx]])
+                    if self.is_testing and self.test_preset_cases:
+                        curr_mesh_file = self.test_obj_mesh_files[object_idx]
+                    curr_shape_name = 'shape_%02d' % object_idx
+                    drop_x = (self.workspace_limits[0][1] - self.workspace_limits[0][0] - 0.2) * np.random.random_sample() + self.workspace_limits[0][0] + 0.1
+                    drop_y = (self.workspace_limits[1][1] - self.workspace_limits[1][0] - 0.2) * np.random.random_sample() + self.workspace_limits[1][0] + 0.1
+                    object_position = [drop_x, drop_y, 0.15]
+                    object_orientation = [2*np.pi*np.random.random_sample(), 2*np.pi*np.random.random_sample(), 2*np.pi*np.random.random_sample()]
+                    if self.is_testing and self.test_preset_cases:
+                        object_position = [self.test_obj_positions[object_idx][0], self.test_obj_positions[object_idx][1], self.test_obj_positions[object_idx][2]]
+                        object_orientation = [self.test_obj_orientations[object_idx][0], self.test_obj_orientations[object_idx][1], self.test_obj_orientations[object_idx][2]]
+                    object_color = [self.obj_mesh_color[object_idx][0], self.obj_mesh_color[object_idx][1], self.obj_mesh_color[object_idx][2]]
+                    # ret_resp,ret_ints,ret_floats,ret_strings,ret_buffer = vrep.simxCallScriptFunction(self.sim_client, 'remoteApiCommandServer',vrep.sim_scripttype_childscript,'importShape',[0,0,255,0], object_position + object_orientation + object_color, [curr_mesh_file, curr_shape_name], bytearray(), vrep.simx_opmode_blocking)
+                    ret_resp,ret_ints,ret_floats,ret_strings,ret_buffer = client.simxCallScriptFunction('remoteApiCommandServer','sim.scripttype_childscript','importShape',[0,0,255,0], object_position + object_orientation + object_color, [curr_mesh_file, curr_shape_name], bytearray(), client.simxServiceCall())
+                    if ret_resp == 8:
+                        print('Failed to add new objects to simulation. Please restart.')
+                        exit()
+                    curr_shape_handle = ret_ints[0]
+                    self.object_handles.append(curr_shape_handle)
+                    if not (self.is_testing and self.test_preset_cases):
+                        time.sleep(2)
+                self.prev_obj_positions = []
+                self.obj_positions = []
+
+
+            def init_objects(self):
+                    # Define colors for object meshes (Tableau palette)
+                self.color_space = np.asarray([[78.0, 121.0, 167.0], # blue
+                                            [89.0, 161.0, 79.0], # green
+                                            [156, 117, 95], # brown
+                                            [242, 142, 43], # orange
+                                            [237.0, 201.0, 72.0], # yellow
+                                            [186, 176, 172], # gray
+                                            [255.0, 87.0, 89.0], # red
+                                            [176, 122, 161], # purple
+                                            [118, 183, 178], # cyan
+                                            [255, 157, 167]])/255.0 #pink
+
+                # Read files in object mesh directory
+                self.obj_mesh_dir = '/home/mohamed/Downloads/visual-pushing-grasping/objects/blocks'
+                self.num_obj = 6
+                self.mesh_list = os.listdir(self.obj_mesh_dir)
+
+                # Randomly choose objects to add to scene
+                self.obj_mesh_ind = np.random.randint(0, len(self.mesh_list), size=self.num_obj)
+                self.obj_mesh_color = self.color_space[np.asarray(range(self.num_obj)) % 10, :]
+
+
+                self.is_testing = True
+                self.test_preset_cases = True
+                self.test_preset_file = '/home/mohamed/Downloads/visual-pushing-grasping/simulation/test-cases/test-10-obj-07.txt'
+
+
+                # If testing, read object meshes and poses from test case file
+                if self.is_testing and self.test_preset_cases:
+                    file = open(self.test_preset_file, 'r')
+                    file_content = file.readlines()
+                    self.test_obj_mesh_files = []
+                    self.test_obj_mesh_colors = []
+                    self.test_obj_positions = []
+                    self.test_obj_orientations = []
+                    for object_idx in range(self.num_obj):
+                        file_content_curr_object = file_content[object_idx].split()
+                        self.test_obj_mesh_files.append(os.path.join(self.obj_mesh_dir,file_content_curr_object[0]))
+                        self.test_obj_mesh_colors.append([float(file_content_curr_object[1]),float(file_content_curr_object[2]),float(file_content_curr_object[3])])
+                        self.test_obj_positions.append([float(file_content_curr_object[4]),float(file_content_curr_object[5]),float(file_content_curr_object[6])])
+                        self.test_obj_orientations.append([float(file_content_curr_object[7]),float(file_content_curr_object[8]),float(file_content_curr_object[9])])
+                    file.close()
+                    self.obj_mesh_color = np.asarray(self.test_obj_mesh_colors)
+
+                # Add objects to simulation environment
+                self.add_objects()
+
 
 
             # Open Gripper
@@ -731,6 +842,8 @@ if __name__ == "__main__":
 
                         self.execute_action = False
 
+                        self.metrics.add(grasp_success)
+
 
                         # push_pred_vis = self.get_prediction_vis(push_predictions, color_heightmap, best_pix_ind)
                         # logger.save_visualizations(trainer.iteration, push_pred_vis, 'push')
@@ -747,7 +860,7 @@ if __name__ == "__main__":
                     ########################## TRAINING ##########################
 
                     # Run training iteration in current thread (aka training thread)
-                    if 'prev_color_img' in locals() and not self.is_testing:
+                    if 'prev_color_img' in locals(): #  and not self.is_testing:
 
                         # Detect changes
                         depth_diff = abs(depth_heightmap - prev_depth_heightmap)
@@ -851,14 +964,15 @@ if __name__ == "__main__":
                             self.remove_grasped_object() # or prev_grasp_success?
                         if self.workspace_empty():
                             self.reset_objects()
+                            self.metrics.update()
 
-                    if self.is_testing:
-                        self.execute_action = True
+                    # if self.is_testing:
+                    #     self.execute_action = True
                         
-                        if grasp_success:
-                            self.remove_grasped_object() # or prev_grasp_success?
-                        if self.workspace_empty():
-                            self.reset_objects()
+                        # if grasp_success:
+                        #     self.remove_grasped_object() # or prev_grasp_success?
+                        # if self.workspace_empty():
+                        #     self.reset_objects()
 
 
                     # Save information for next training step
@@ -880,10 +994,11 @@ if __name__ == "__main__":
     ######################################################################################################
 
         robot = Robot(USE_CUDA=True, LATERAL=False, IS_TESTING=TEST)
+        n_iterations = 30 if TEST else 10001 
         for iter in range(0, 10001):
             print('*'*100)
             print('*'*100)
-            print('*'*25, ' Iteration: {} '.format(iter+1), '*'*25)
+            print('*'*25, ' Iteration: {}/{} '.format(iter+1, n_iterations), '*'*25)
             print('*'*100)
             print('*'*100)
 
@@ -891,6 +1006,11 @@ if __name__ == "__main__":
 
             if (iter+1) % 50 == 0:
                 robot.save_snapshot(iter)
+
+            if robot.metrics.run_count == 30:
+                break
+
+        robot.metrics.save()
 
         # Stop simulation
         print('Stopping Simulation...')
